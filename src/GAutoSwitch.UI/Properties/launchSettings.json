@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "GAutoSwitch.UI (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "GAutoSwitch.UI (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}

@@ -1,0 +1,13 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+    <Platform Name="ARM64" />
+  </Configurations>
+  <Folder Name="/src/">
+    <Project Path="src/GAutoSwitch.Core/GAutoSwitch.Core.csproj" />
+    <Project Path="src/GAutoSwitch.Hardware/GAutoSwitch.Hardware.csproj" />
+    <Project Path="src/GAutoSwitch.UI/GAutoSwitch.UI.csproj" />
+    <Project Path="src/GAutoSwitch.HidSandbox/GAutoSwitch.HidSandbox.csproj" />
+  </Folder>
+</Solution>
