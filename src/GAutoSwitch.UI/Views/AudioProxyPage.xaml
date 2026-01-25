@@ -1,0 +1,629 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Page
+    x:Class="GAutoSwitch.UI.Views.AudioProxyPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:models="using:GAutoSwitch.Core.Models"
+    mc:Ignorable="d"
+    Background="Transparent"
+    Loaded="Page_Loaded"
+    Unloaded="Page_Unloaded">
+
+    <Grid>
+        <ScrollViewer>
+            <StackPanel
+                Padding="56,24,56,24"
+                MaxWidth="1000"
+                HorizontalAlignment="Stretch">
+
+                <!-- Page Header -->
+                <TextBlock
+                    Text="Audio Proxy"
+                    Style="{StaticResource PageHeaderStyle}"/>
+                <TextBlock
+                    Text="Route audio through virtual devices for seamless switching in games"
+                    Style="{StaticResource CaptionTextBlockStyle}"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    Margin="0,0,0,8"/>
+
+                <!-- VB-Cable Warning InfoBar -->
+                <InfoBar
+                    x:Name="VBCableWarningInfoBar"
+                    IsOpen="{x:Bind ViewModel.ShowVBCableWarning, Mode=OneWay}"
+                    Severity="Warning"
+                    Title="VB-Cable Not Detected"
+                    IsClosable="False"
+                    Margin="0,16,0,0">
+                    <InfoBar.Content>
+                        <StackPanel Spacing="8" Padding="0,0,0,12">
+                            <TextBlock
+                                Text="The audio proxy requires VB-Cable (a free virtual audio device) to function. Please install it and restart the application."
+                                TextWrapping="Wrap"
+                                Style="{StaticResource CaptionTextBlockStyle}"/>
+                            <HyperlinkButton
+                                Content="Download VB-Cable (vb-audio.com)"
+                                NavigateUri="https://vb-audio.com/Cable/"/>
+                        </StackPanel>
+                    </InfoBar.Content>
+                </InfoBar>
+
+                <!-- VB-Cable Input Warning InfoBar (for mic proxy) -->
+                <InfoBar
+                    x:Name="VBCableInputWarningInfoBar"
+                    IsOpen="{x:Bind ViewModel.ShowVBCableInputWarning, Mode=OneWay}"
+                    Severity="Warning"
+                    Title="Second Virtual Device Needed for Mic Proxy"
+                    IsClosable="False"
+                    Margin="0,8,0,0">
+                    <InfoBar.Content>
+                        <StackPanel Spacing="8" Padding="0,0,0,12">
+                            <TextBlock
+                                Text="The mic proxy requires a second virtual audio device. For best results, install VB-Cable A+B."
+                                TextWrapping="Wrap"
+                                Style="{StaticResource CaptionTextBlockStyle}"/>
+                            <HyperlinkButton
+                                Content="Download VB-Cable A+B (vb-audio.com)"
+                                NavigateUri="https://vb-audio.com/Cable/"/>
+                        </StackPanel>
+                    </InfoBar.Content>
+                </InfoBar>
+
+                <!-- Error InfoBar -->
+                <InfoBar
+                    x:Name="ErrorInfoBar"
+                    IsOpen="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource StringNotEmptyToBoolConverter}}"
+                    Severity="Error"
+                    Title="Speaker Proxy Error"
+                    Message="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+                    IsClosable="True"
+                    Margin="0,8,0,0"/>
+
+                <!-- Mic Error InfoBar -->
+                <InfoBar
+                    x:Name="MicErrorInfoBar"
+                    IsOpen="{x:Bind ViewModel.MicErrorMessage, Mode=OneWay, Converter={StaticResource StringNotEmptyToBoolConverter}}"
+                    Severity="Error"
+                    Title="Microphone Proxy Error"
+                    Message="{x:Bind ViewModel.MicErrorMessage, Mode=OneWay}"
+                    IsClosable="True"
+                    Margin="0,8,0,0"/>
+
+                <!-- Combined Status Card -->
+                <Border
+                    Style="{StaticResource HeadsetStatusCardStyle}"
+                    Margin="0,16,0,0">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <!-- Speaker Status Row -->
+                        <Grid Grid.Row="0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <Grid Grid.Column="0" Margin="0,0,16,0" VerticalAlignment="Center">
+                                <FontIcon
+                                    Glyph="{x:Bind ViewModel.StatusIcon, Mode=OneWay}"
+                                    FontSize="28"
+                                    Foreground="{x:Bind ViewModel.StatusColor, Mode=OneWay}"/>
+                            </Grid>
+
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                                <TextBlock
+                                    Text="Speaker Proxy"
+                                    Style="{StaticResource SubtitleTextBlockStyle}"
+                                    FontWeight="SemiBold"/>
+                                <TextBlock
+                                    Text="{x:Bind ViewModel.StatusDescription, Mode=OneWay}"
+                                    Style="{StaticResource CaptionTextBlockStyle}"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    TextWrapping="Wrap"/>
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="16,0">
+                                <Ellipse
+                                    Width="10"
+                                    Height="10"
+                                    Fill="{x:Bind ViewModel.StatusColor, Mode=OneWay}"/>
+                                <TextBlock
+                                    Text="{x:Bind ViewModel.StatusText, Mode=OneWay}"
+                                    VerticalAlignment="Center"
+                                    Foreground="{x:Bind ViewModel.StatusColor, Mode=OneWay}"
+                                    FontWeight="SemiBold"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- Microphone Status Row -->
+                        <Grid Grid.Row="1" Margin="0,12,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <Grid Grid.Column="0" Margin="0,0,16,0" VerticalAlignment="Center">
+                                <FontIcon
+                                    Glyph="{x:Bind ViewModel.MicStatusIcon, Mode=OneWay}"
+                                    FontSize="28"
+                                    Foreground="{x:Bind ViewModel.MicStatusColor, Mode=OneWay}"/>
+                            </Grid>
+
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                                <TextBlock
+                                    Text="Microphone Proxy"
+                                    Style="{StaticResource SubtitleTextBlockStyle}"
+                                    FontWeight="SemiBold"/>
+                                <TextBlock
+                                    Text="{x:Bind ViewModel.MicStatusDescription, Mode=OneWay}"
+                                    Style="{StaticResource CaptionTextBlockStyle}"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    TextWrapping="Wrap"/>
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="16,0">
+                                <Ellipse
+                                    Width="10"
+                                    Height="10"
+                                    Fill="{x:Bind ViewModel.MicStatusColor, Mode=OneWay}"/>
+                                <TextBlock
+                                    Text="{x:Bind ViewModel.MicStatusText, Mode=OneWay}"
+                                    VerticalAlignment="Center"
+                                    Foreground="{x:Bind ViewModel.MicStatusColor, Mode=OneWay}"
+                                    FontWeight="SemiBold"/>
+                            </StackPanel>
+                        </Grid>
+                    </Grid>
+                </Border>
+
+                <!-- Speaker Proxy Section -->
+                <TextBlock
+                    Text="Speaker Proxy"
+                    Style="{StaticResource SettingsSectionHeaderStyle}"/>
+
+                <!-- Enable Speaker Proxy Toggle -->
+                <Border Style="{StaticResource SettingsCardStyle}" Margin="0,0,0,8">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <FontIcon
+                            Grid.Column="0"
+                            Glyph="&#xE9CE;"
+                            FontSize="20"
+                            Margin="0,0,16,0"
+                            VerticalAlignment="Center"/>
+
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                            <TextBlock Text="Enable Speaker Proxy"/>
+                            <TextBlock
+                                Text="Route speaker audio through VB-Cable for seamless device switching"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </StackPanel>
+
+                        <ToggleSwitch
+                            Grid.Column="2"
+                            IsOn="{x:Bind ViewModel.UseAudioProxy, Mode=TwoWay}"
+                            IsEnabled="{x:Bind ViewModel.CanEnableProxy, Mode=OneWay}"
+                            VerticalAlignment="Center"/>
+                    </Grid>
+                </Border>
+
+                <!-- Virtual Device Selector (Optional Override) -->
+                <Border Style="{StaticResource SettingsCardStyle}" Margin="0,0,0,8">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <FontIcon
+                            Grid.Column="0"
+                            Glyph="&#xE7F5;"
+                            FontSize="20"
+                            Margin="0,0,16,0"
+                            VerticalAlignment="Center"/>
+
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                            <TextBlock Text="Virtual Input Device"/>
+                            <TextBlock
+                                Text="Override the auto-detected virtual device (optional)"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </StackPanel>
+
+                        <ComboBox
+                            Grid.Column="2"
+                            MinWidth="200"
+                            ItemsSource="{x:Bind ViewModel.VirtualDevices, Mode=OneWay}"
+                            SelectedItem="{x:Bind ViewModel.SelectedVirtualDevice, Mode=TwoWay}"
+                            IsEnabled="{x:Bind ViewModel.CanEnableProxy, Mode=OneWay}"
+                            PlaceholderText="Auto-detect">
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate x:DataType="models:AudioDevice">
+                                    <TextBlock Text="{x:Bind Name}" TextTrimming="CharacterEllipsis"/>
+                                </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                        </ComboBox>
+                    </Grid>
+                </Border>
+
+                <!-- Microphone Proxy Section -->
+                <TextBlock
+                    Text="Microphone Proxy"
+                    Style="{StaticResource SettingsSectionHeaderStyle}"/>
+
+                <!-- Enable Microphone Proxy Toggle -->
+                <Border Style="{StaticResource SettingsCardStyle}" Margin="0,0,0,8">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <FontIcon
+                            Grid.Column="0"
+                            Glyph="&#xE720;"
+                            FontSize="20"
+                            Margin="0,0,16,0"
+                            VerticalAlignment="Center"/>
+
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                            <TextBlock Text="Enable Microphone Proxy"/>
+                            <TextBlock
+                                Text="Route microphone audio through a virtual device (auto-switches with headset)"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </StackPanel>
+
+                        <ToggleSwitch
+                            Grid.Column="2"
+                            IsOn="{x:Bind ViewModel.UseMicProxy, Mode=TwoWay}"
+                            IsEnabled="{x:Bind ViewModel.IsVBCableInputInstalled, Mode=OneWay}"
+                            VerticalAlignment="Center"/>
+                    </Grid>
+                </Border>
+
+                <!-- Physical Microphone Selector (fallback/manual) -->
+                <Border Style="{StaticResource SettingsCardStyle}" Margin="0,0,0,8">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <FontIcon
+                            Grid.Column="0"
+                            Glyph="&#xE720;"
+                            FontSize="20"
+                            Margin="0,0,16,0"
+                            VerticalAlignment="Center"/>
+
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                            <TextBlock Text="Fallback Microphone"/>
+                            <TextBlock
+                                Text="Used when no wireless/wired mic is configured on the main page"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </StackPanel>
+
+                        <ComboBox
+                            Grid.Column="2"
+                            MinWidth="200"
+                            ItemsSource="{x:Bind ViewModel.MicrophoneDevices, Mode=OneWay}"
+                            SelectedItem="{x:Bind ViewModel.SelectedMicrophoneDevice, Mode=TwoWay}"
+                            IsEnabled="{x:Bind ViewModel.UseMicProxy, Mode=OneWay}"
+                            PlaceholderText="Select microphone">
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate x:DataType="models:AudioDevice">
+                                    <TextBlock Text="{x:Bind Name}" TextTrimming="CharacterEllipsis"/>
+                                </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                        </ComboBox>
+                    </Grid>
+                </Border>
+
+                <!-- Proxy Settings Section -->
+                <TextBlock
+                    Text="Proxy Settings"
+                    Style="{StaticResource SettingsSectionHeaderStyle}"/>
+
+                <!-- Buffer Size Slider -->
+                <Border Style="{StaticResource SettingsCardStyle}" Margin="0,0,0,8">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <FontIcon
+                            Grid.Column="0"
+                            Glyph="&#xE916;"
+                            FontSize="20"
+                            Margin="0,0,16,0"
+                            VerticalAlignment="Center"/>
+
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                            <TextBlock Text="Buffer Size"/>
+                            <TextBlock
+                                Text="Lower values reduce latency but increase CPU usage"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                            <Slider
+                                Width="150"
+                                Minimum="5"
+                                Maximum="50"
+                                StepFrequency="5"
+                                TickFrequency="5"
+                                SnapsTo="StepValues"
+                                Value="{x:Bind ViewModel.ProxyBufferMs, Mode=TwoWay}"
+                                IsEnabled="{x:Bind ViewModel.CanEnableProxy, Mode=OneWay}"/>
+                            <TextBlock
+                                Text="{x:Bind ViewModel.BufferDisplayText, Mode=OneWay}"
+                                VerticalAlignment="Center"
+                                Width="50"
+                                TextAlignment="Right"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <!-- Auto-start Mic Proxy Toggle -->
+                <Border Style="{StaticResource SettingsCardStyle}" Margin="0,0,0,8">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <FontIcon
+                            Grid.Column="0"
+                            Glyph="&#xE768;"
+                            FontSize="20"
+                            Margin="0,0,16,0"
+                            VerticalAlignment="Center"/>
+
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                            <TextBlock Text="Auto-start Mic Proxy"/>
+                            <TextBlock
+                                Text="Start mic proxy automatically when speaker proxy starts"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </StackPanel>
+
+                        <ToggleSwitch
+                            Grid.Column="2"
+                            IsOn="{x:Bind ViewModel.MicProxyAutoStart, Mode=TwoWay}"
+                            IsEnabled="{x:Bind ViewModel.UseMicProxy, Mode=OneWay}"
+                            VerticalAlignment="Center"/>
+                    </Grid>
+                </Border>
+
+                <!-- Controls Section -->
+                <TextBlock
+                    Text="Controls"
+                    Style="{StaticResource SettingsSectionHeaderStyle}"/>
+
+                <!-- Start/Stop Buttons -->
+                <Border Style="{StaticResource SettingsCardStyle}" Margin="0,0,0,8">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <FontIcon
+                            Grid.Column="0"
+                            Glyph="&#xE768;"
+                            FontSize="20"
+                            Margin="0,0,16,0"
+                            VerticalAlignment="Center"/>
+
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                            <TextBlock Text="Proxy Control"/>
+                            <TextBlock
+                                Text="Start or stop the audio proxy (both speaker and mic)"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                            <Button
+                                Content="Start"
+                                Style="{StaticResource AccentButtonStyle}"
+                                Command="{x:Bind ViewModel.StartProxyCommand}"
+                                IsEnabled="{x:Bind ViewModel.CanStartProxy, Mode=OneWay}"/>
+                            <Button
+                                Content="Stop"
+                                Command="{x:Bind ViewModel.StopProxyCommand}"
+                                IsEnabled="{x:Bind ViewModel.CanStopProxy, Mode=OneWay}"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <!-- Mic Proxy Toggle Button (runtime) -->
+                <Border Style="{StaticResource SettingsCardStyle}" Margin="0,0,0,8">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <FontIcon
+                            Grid.Column="0"
+                            Glyph="&#xE720;"
+                            FontSize="20"
+                            Margin="0,0,16,0"
+                            VerticalAlignment="Center"/>
+
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                            <TextBlock Text="Mic Proxy Runtime Toggle"/>
+                            <TextBlock
+                                Text="Enable/disable mic proxy while speaker proxy is running"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </StackPanel>
+
+                        <Button
+                            Grid.Column="2"
+                            Content="{x:Bind ViewModel.IsMicProxyRunning, Mode=OneWay, Converter={StaticResource BoolToMicButtonTextConverter}}"
+                            Command="{x:Bind ViewModel.ToggleMicProxyCommand}"
+                            IsEnabled="{x:Bind ViewModel.CanEnableMicProxy, Mode=OneWay}"
+                            VerticalAlignment="Center"/>
+                    </Grid>
+                </Border>
+
+                <!-- Refresh VB-Cable Detection -->
+                <Border Style="{StaticResource SettingsCardStyle}" Margin="0,0,0,8">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <FontIcon
+                            Grid.Column="0"
+                            Glyph="&#xE72C;"
+                            FontSize="20"
+                            Margin="0,0,16,0"
+                            VerticalAlignment="Center"/>
+
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                            <TextBlock Text="Refresh Detection"/>
+                            <TextBlock
+                                Text="Re-scan for VB-Cable and virtual audio devices"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </StackPanel>
+
+                        <Button
+                            Grid.Column="2"
+                            Content="Refresh"
+                            Command="{x:Bind ViewModel.RefreshVBCableCommand}"
+                            VerticalAlignment="Center"/>
+                    </Grid>
+                </Border>
+
+                <!-- Setup Instructions -->
+                <TextBlock
+                    Text="Setup Instructions"
+                    Style="{StaticResource SettingsSectionHeaderStyle}"/>
+
+                <Border Style="{StaticResource SettingsCardStyle}" Margin="0,0,0,8">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <FontIcon
+                            Grid.Column="0"
+                            Glyph="&#xE9CE;"
+                            FontSize="20"
+                            Margin="0,0,16,0"
+                            VerticalAlignment="Top"/>
+
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="8">
+                            <TextBlock Text="Speaker Proxy Setup" FontWeight="SemiBold"/>
+                            <TextBlock
+                                TextWrapping="Wrap"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}">
+                                <Run Text="1. Install VB-Cable from"/><Run Text=" "/><Hyperlink NavigateUri="https://vb-audio.com/Cable/">vb-audio.com/Cable</Hyperlink>
+                            </TextBlock>
+                            <TextBlock
+                                Text="2. Enable the speaker proxy toggle above"
+                                TextWrapping="Wrap"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <TextBlock
+                                Text="3. In your game's audio settings, set the output device to 'CABLE Input'"
+                                TextWrapping="Wrap"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <TextBlock
+                                Text="4. The proxy will forward audio to your real device and switch seamlessly"
+                                TextWrapping="Wrap"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <Border Style="{StaticResource SettingsCardStyle}" Margin="0,0,0,8">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <FontIcon
+                            Grid.Column="0"
+                            Glyph="&#xE720;"
+                            FontSize="20"
+                            Margin="0,0,16,0"
+                            VerticalAlignment="Top"/>
+
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="8">
+                            <TextBlock Text="Microphone Proxy Setup" FontWeight="SemiBold"/>
+                            <TextBlock
+                                TextWrapping="Wrap"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}">
+                                <Run Text="1. For best results, install VB-Cable A+B from"/><Run Text=" "/><Hyperlink NavigateUri="https://vb-audio.com/Cable/">vb-audio.com</Hyperlink>
+                            </TextBlock>
+                            <TextBlock
+                                Text="2. Configure your wireless and wired microphones on the main page"
+                                TextWrapping="Wrap"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <TextBlock
+                                Text="3. Enable the microphone proxy toggle above"
+                                TextWrapping="Wrap"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <TextBlock
+                                Text="4. In your app/game, set the microphone to 'CABLE Output' (or 'CABLE-B Output')"
+                                TextWrapping="Wrap"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <TextBlock
+                                Text="5. The proxy will auto-switch between wireless/wired mic based on headset state"
+                                TextWrapping="Wrap"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Loading Overlay -->
+        <Grid
+            Background="{ThemeResource LayerOnMicaBaseAltFillColorDefaultBrush}"
+            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay}">
+            <ProgressRing IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}" />
+        </Grid>
+    </Grid>
+</Page>

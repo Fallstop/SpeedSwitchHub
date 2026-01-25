@@ -10,15 +10,18 @@ namespace GAutoSwitch.Hardware.Audio;
 /// </summary>
 public sealed class AudioSwitcher : IAudioSwitcher
 {
+    private readonly AudioPolicyConfigInterop.IPolicyConfigWin10? _policyConfigWin10;
     private readonly AudioPolicyConfigInterop.IPolicyConfig? _policyConfig;
     private readonly AudioPolicyConfigInterop.IPolicyConfigVista? _policyConfigVista;
     private readonly bool _isSupported;
 
     public AudioSwitcher()
     {
-        // Try the modern interface first, fall back to Vista version
+        // Try Win10 interface first (supports per-process routing), then fall back to legacy interfaces
+        _policyConfigWin10 = AudioPolicyConfigInterop.CreatePolicyConfigWin10();
         _policyConfig = AudioPolicyConfigInterop.CreatePolicyConfig();
-        if (_policyConfig != null)
+
+        if (_policyConfigWin10 != null || _policyConfig != null)
         {
             _isSupported = true;
         }
@@ -90,6 +93,12 @@ public sealed class AudioSwitcher : IAudioSwitcher
         if (!_isSupported || string.IsNullOrEmpty(toDeviceId))
             return 0;
 
+        if (_policyConfigWin10 == null)
+        {
+            Debug.WriteLine("[AudioSwitcher] Win10 interface not available, cannot migrate sessions");
+            return 0;
+        }
+
         try
         {
             // Get all active session process IDs
@@ -100,26 +109,40 @@ public sealed class AudioSwitcher : IAudioSwitcher
             string mmDeviceId = ConvertToMMDeviceId(toDeviceId);
             int migratedCount = 0;
 
-            // Try to set per-process default endpoint using IPolicyConfig
-            // Note: True session migration requires additional interfaces that may not be available
-            // The SetDefaultEndpoint call already helps since new audio streams will use the new default
-            // For existing streams, applications typically need to handle device changes themselves
-
-            // Log the process IDs that would benefit from migration
+            // Use SetPersistedDefaultAudioEndpoint to migrate each process to the new device
             foreach (var pid in processIds)
             {
                 try
                 {
                     var process = Process.GetProcessById((int)pid);
-                    Debug.WriteLine($"Active audio session: PID {pid} ({process.ProcessName})");
+                    Debug.WriteLine($"[AudioSwitcher] Migrating PID {pid} ({process.ProcessName})");
+
+                    // Set for all roles (Console=0, Multimedia=1, Communications=2)
+                    for (int role = 0; role <= 2; role++)
+                    {
+                        int hr = _policyConfigWin10.SetPersistedDefaultAudioEndpoint(
+                            pid,
+                            (int)flow,
+                            role,
+                            mmDeviceId);
+
+                        if (hr != 0)
+                            Debug.WriteLine($"[AudioSwitcher] Role {role} failed: 0x{hr:X8}");
+                    }
                     migratedCount++;
                 }
                 catch (ArgumentException)
                 {
                     // Process no longer exists
+                    Debug.WriteLine($"[AudioSwitcher] PID {pid} no longer exists");
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[AudioSwitcher] Failed to migrate PID {pid}: {ex.Message}");
                 }
             }
 
+            Debug.WriteLine($"[AudioSwitcher] Migrated {migratedCount} session(s)");
             return migratedCount;
         }
         catch (Exception ex)

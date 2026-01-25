@@ -11,6 +11,19 @@
         <WindowsPackageType>None</WindowsPackageType>
         <!-- <WindowsSdkPackageVersion>10.0.19041.38</WindowsSdkPackageVersion> -->
 
+        <!-- Version Properties -->
+        <Version>1.0.0</Version>
+        <AssemblyVersion>1.0.0.0</AssemblyVersion>
+        <FileVersion>1.0.0.0</FileVersion>
+        <Product>G-AutoSwitch</Product>
+        <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+
+        <!-- Self-contained deployment for Squirrel -->
+        <SelfContained>true</SelfContained>
+        <PublishSingleFile>false</PublishSingleFile>
+        <PublishReadyToRun>true</PublishReadyToRun>
+        <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+
         <!-- Project Options -->
         <Nullable>enable</Nullable>
         <LangVersion>latest</LangVersion>
@@ -41,6 +54,7 @@
     </ItemGroup>
 
     <ItemGroup>
+        <PackageReference Include="Clowd.Squirrel" Version="2.11.*" />
         <PackageReference Include="H.NotifyIcon.WinUI" Version="2.4.1" />
         <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.*" />
         <PackageReference Include="Microsoft.Web.WebView2" Version="1.*" />
@@ -71,4 +85,13 @@
     <PropertyGroup Condition="'$(DisableHasPackageAndPublishMenuAddedByProject)'!='true' and '$(EnableMsixTooling)'=='true'">
         <HasPackageAndPublishMenu>true</HasPackageAndPublishMenu>
     </PropertyGroup>
+
+    <!-- Copy audio-proxy.exe to output directory -->
+    <Target Name="CopyAudioProxy" AfterTargets="Build" Condition="Exists('$(ProjectDir)..\audio-proxy\target\release\audio-proxy.exe')">
+        <Copy
+            SourceFiles="$(ProjectDir)..\audio-proxy\target\release\audio-proxy.exe"
+            DestinationFolder="$(OutputPath)"
+            SkipUnchangedFiles="true" />
+        <Message Text="Copied audio-proxy.exe to $(OutputPath)" Importance="high" />
+    </Target>
 </Project>

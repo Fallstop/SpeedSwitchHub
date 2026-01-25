@@ -18,3 +18,9 @@ src/GAutoSwitch.HidSandbox/bin/
 src/GAutoSwitch.UI/bin/
 
 src/GAutoSwitch.UI/obj/
+
+publish/
+
+src/audio-proxy/target/
+
+releases/

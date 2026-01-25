@@ -3,11 +3,13 @@ using System.IO;
 using GAutoSwitch.Core.Interfaces;
 using GAutoSwitch.Core.Services;
 using GAutoSwitch.Hardware;
+using GAutoSwitch.Hardware.Audio;
 using GAutoSwitch.UI.Services;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml.Navigation;
 using Microsoft.UI.Composition.SystemBackdrops;
+using Squirrel;
 
 namespace GAutoSwitch.UI;
 
@@ -46,6 +48,11 @@ private Window? _window;
     public static IAutoSwitchService AutoSwitchService { get; private set; } = null!;
 
     /// <summary>
+    /// Shared audio proxy service instance for managing the low-latency audio proxy.
+    /// </summary>
+    public static IAudioProxyService AudioProxyService { get; } = new AudioProxyService();
+
+    /// <summary>
     /// Gets the main window instance.
     /// </summary>
     public static Window? MainWindow { get; private set; }
@@ -55,11 +62,48 @@ private Window? _window;
     /// </summary>
     public App()
     {
+        // Handle Squirrel events BEFORE InitializeComponent
+        SquirrelAwareApp.HandleEvents(
+            onInitialInstall: OnAppInstall,
+            onAppUpdate: OnAppUpdate,
+            onAppUninstall: OnAppUninstall,
+            onEveryRun: OnEveryRun
+        );
+
 #if DEBUG
         // Enable Debug.WriteLine output to Rider/VS console
         Trace.Listeners.Add(new ConsoleTraceListener());
 #endif
         this.InitializeComponent();
+    }
+
+    private static void OnAppInstall(SemanticVersion version, IAppTools tools)
+    {
+        // Create Start Menu and Desktop shortcuts
+        tools.CreateShortcutForThisExe(ShortcutLocation.StartMenu | ShortcutLocation.Desktop);
+    }
+
+    private static void OnAppUpdate(SemanticVersion version, IAppTools tools)
+    {
+        // Update shortcuts to point to new version
+        tools.CreateShortcutForThisExe(ShortcutLocation.StartMenu | ShortcutLocation.Desktop);
+    }
+
+    private static void OnAppUninstall(SemanticVersion version, IAppTools tools)
+    {
+        // Remove all shortcuts
+        tools.RemoveShortcutForThisExe(ShortcutLocation.StartMenu | ShortcutLocation.Desktop);
+    }
+
+    private static void OnEveryRun(SemanticVersion version, IAppTools tools, bool firstRun)
+    {
+        // Update shortcuts on every run (ensures they're always current)
+        tools.SetProcessAppUserModelId();
+
+        if (firstRun)
+        {
+            Debug.WriteLine("G-AutoSwitch: First run after installation");
+        }
     }
 
     /// <summary>
@@ -70,13 +114,20 @@ private Window? _window;
         // Load settings first
         await SettingsService.LoadAsync();
 
-        // Initialize auto-switch service
+        // Initialize auto-switch service (with audio proxy integration)
         AutoSwitchService = new AutoSwitchService(
             HeadsetStateService,
             AudioDeviceService,
-            SettingsService);
+            SettingsService,
+            AudioProxyService);
         AutoSwitchService.IsEnabled = SettingsService.Settings.AutoSwitchEnabled;
         AutoSwitchService.Start();
+
+        // Auto-start audio proxy if enabled
+        if (SettingsService.Settings.UseAudioProxy)
+        {
+            _ = StartAudioProxyAsync();
+        }
 
         // Check for --minimized or --silent command-line args
         var args = Environment.GetCommandLineArgs();
@@ -124,6 +175,72 @@ private Window? _window;
         {
             _window.Activate();
         }
+    }
+
+    /// <summary>
+    /// Starts the audio proxy with the configured wireless/wired output device.
+    /// </summary>
+    private static async Task StartAudioProxyAsync()
+    {
+        var settings = SettingsService.Settings;
+        var headsetState = HeadsetStateService.CurrentState;
+
+        // Determine speaker output based on headset state (use configured wireless/wired device)
+        string? speakerOutputDeviceId = null;
+        if (headsetState == HeadsetConnectionState.Online && !string.IsNullOrEmpty(settings.WirelessDeviceId))
+        {
+            speakerOutputDeviceId = settings.WirelessDeviceId;
+            Debug.WriteLine($"[App] Using wireless speaker device for proxy output");
+        }
+        else if (!string.IsNullOrEmpty(settings.WiredDeviceId))
+        {
+            speakerOutputDeviceId = settings.WiredDeviceId;
+            Debug.WriteLine($"[App] Using wired speaker device for proxy output");
+        }
+        else
+        {
+            // Fallback to default device only if no configured devices
+            var outputDevice = AudioDeviceService.GetDefaultDevice();
+            if (outputDevice != null)
+            {
+                speakerOutputDeviceId = outputDevice.Id;
+                Debug.WriteLine($"[App] No configured devices, using default: {outputDevice.Name}");
+            }
+        }
+
+        if (string.IsNullOrEmpty(speakerOutputDeviceId))
+        {
+            Debug.WriteLine("[App] Cannot auto-start audio proxy: no output device configured or found");
+            return;
+        }
+
+        // Determine microphone input if mic proxy is enabled
+        string? micInputDeviceId = null;
+        if (settings.UseMicProxy && settings.MicProxyAutoStart && AudioProxyService.IsVBCableInputInstalled)
+        {
+            // Use wireless/wired mic based on current headset state
+            if (headsetState == HeadsetConnectionState.Online && !string.IsNullOrEmpty(settings.WirelessMicrophoneId))
+            {
+                micInputDeviceId = settings.WirelessMicrophoneId;
+            }
+            else if (headsetState == HeadsetConnectionState.Offline && !string.IsNullOrEmpty(settings.WiredMicrophoneId))
+            {
+                micInputDeviceId = settings.WiredMicrophoneId;
+            }
+            else
+            {
+                // Fallback to configured mic proxy input device
+                micInputDeviceId = settings.MicProxyInputDeviceId;
+            }
+        }
+
+        Debug.WriteLine($"[App] Auto-starting audio proxy with output: {speakerOutputDeviceId}");
+        if (!string.IsNullOrEmpty(micInputDeviceId))
+        {
+            Debug.WriteLine($"[App] Also starting mic proxy with input: {micInputDeviceId}");
+        }
+
+        await AudioProxyService.StartAsync(speakerOutputDeviceId, micInputDeviceId);
     }
 
     private void OnWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
@@ -189,6 +306,9 @@ private Window? _window;
 
         // Dispose auto-switch service
         AutoSwitchService?.Dispose();
+
+        // Dispose audio proxy service
+        AudioProxyService?.Dispose();
 
         // Dispose headset state service
         HeadsetStateService.Dispose();

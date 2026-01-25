@@ -55,6 +55,65 @@ internal static class AudioPolicyConfigInterop
         int SetEndpointVisibility(string deviceId, int visible);
     }
 
+    // IPolicyConfigWin10 - Windows 10+ interface with per-app routing support
+    // Uses a different GUID and has additional methods for per-process audio routing
+    [ComImport]
+    [Guid("bfa971f1-4d5e-40bb-935e-967039bfbee4")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IPolicyConfigWin10
+    {
+        // Methods 0-11: identical to existing IPolicyConfig
+        [PreserveSig]
+        int GetMixFormat(string deviceId, IntPtr format);
+
+        [PreserveSig]
+        int GetDeviceFormat(string deviceId, int @default, IntPtr format);
+
+        [PreserveSig]
+        int ResetDeviceFormat(string deviceId);
+
+        [PreserveSig]
+        int SetDeviceFormat(string deviceId, IntPtr endpointFormat, IntPtr mixFormat);
+
+        [PreserveSig]
+        int GetProcessingPeriod(string deviceId, int @default, IntPtr defaultPeriod, IntPtr minimumPeriod);
+
+        [PreserveSig]
+        int SetProcessingPeriod(string deviceId, IntPtr period);
+
+        [PreserveSig]
+        int GetShareMode(string deviceId, IntPtr mode);
+
+        [PreserveSig]
+        int SetShareMode(string deviceId, IntPtr mode);
+
+        [PreserveSig]
+        int GetPropertyValue(string deviceId, ref PropertyKey key, IntPtr value);
+
+        [PreserveSig]
+        int SetPropertyValue(string deviceId, ref PropertyKey key, IntPtr value);
+
+        [PreserveSig]
+        int SetDefaultEndpoint(
+            [MarshalAs(UnmanagedType.LPWStr)] string deviceId,
+            ERole role);
+
+        [PreserveSig]
+        int SetEndpointVisibility(string deviceId, int visible);
+
+        // Method 12: GetEndpointVisibility
+        [PreserveSig]
+        int GetEndpointVisibility(string deviceId, out int visible);
+
+        // Method 13: SetPersistedDefaultAudioEndpoint - The key method for per-app routing
+        [PreserveSig]
+        int SetPersistedDefaultAudioEndpoint(
+            uint processId,
+            int flow,      // 0=Render, 1=Capture
+            int role,      // 0=Console, 1=Multimedia, 2=Communications
+            [MarshalAs(UnmanagedType.LPWStr)] string deviceId);
+    }
+
     // IPolicyConfigVista - older interface for Vista/Win7, fallback if IPolicyConfig fails
     [ComImport]
     [Guid("568B9108-44BF-40B4-9006-86AFE5B5A620")]
@@ -107,6 +166,27 @@ internal static class AudioPolicyConfigInterop
     {
         public Guid fmtid;
         public uint pid;
+    }
+
+    /// <summary>
+    /// Creates an instance of the IPolicyConfigWin10 interface (Windows 10+).
+    /// This interface supports per-process audio endpoint routing.
+    /// Returns null if the interface is not available on this system.
+    /// </summary>
+    public static IPolicyConfigWin10? CreatePolicyConfigWin10()
+    {
+        try
+        {
+            return (IPolicyConfigWin10)new PolicyConfigClient();
+        }
+        catch (COMException)
+        {
+            return null;
+        }
+        catch (InvalidCastException)
+        {
+            return null;
+        }
     }
 
     /// <summary>

@@ -31,6 +31,9 @@ public sealed partial class ShellPage : Page
                 case "Settings":
                     ContentFrame.Navigate(typeof(SettingsPage));
                     break;
+                case "AudioProxy":
+                    ContentFrame.Navigate(typeof(AudioProxyPage));
+                    break;
                 case "About":
                     ContentFrame.Navigate(typeof(AboutPage));
                     break;

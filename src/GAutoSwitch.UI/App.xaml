@@ -17,6 +17,8 @@
 
             <!-- Converters -->
             <converters:BoolToVisibilityInverseConverter x:Key="BoolToVisibilityInverseConverter"/>
+            <converters:StringNotEmptyToBoolConverter x:Key="StringNotEmptyToBoolConverter"/>
+            <converters:BoolToMicButtonTextConverter x:Key="BoolToMicButtonTextConverter"/>
             <!-- Card-based settings styles -->
             <Style x:Key="SettingsCardStyle" TargetType="Border">
                 <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}"/>

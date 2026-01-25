@@ -55,6 +55,11 @@
                         <FontIcon Glyph="&#xE713;"/>
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
+                <NavigationViewItem Content="Audio Proxy" Tag="AudioProxy">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE7FC;"/>
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
             </NavigationView.MenuItems>
 
             <NavigationView.FooterMenuItems>

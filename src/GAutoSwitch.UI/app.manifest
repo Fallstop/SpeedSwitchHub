@@ -2,6 +2,9 @@
 <assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
   <assemblyIdentity version="1.0.0.0" name="GAutoSwitch.UI.app"/>
 
+  <!-- Mark as Squirrel-aware for auto-update support -->
+  <SquirrelAwareVersion xmlns="urn:schema-squirrel-com:asm.v1">1</SquirrelAwareVersion>
+
   <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
     <application>
       <!--The ID below informs the system that this application is compatible with OS features first introduced in Windows 8. 

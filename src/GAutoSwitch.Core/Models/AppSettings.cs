@@ -59,4 +59,50 @@ public sealed class AppSettings
     /// Whether automatic audio switching is enabled.
     /// </summary>
     public bool AutoSwitchEnabled { get; set; } = true;
+
+    // ========================================
+    // Optional Audio Proxy Settings
+    // (for games that don't support device switching)
+    // ========================================
+
+    /// <summary>
+    /// Whether to use the audio proxy feature.
+    /// When enabled, audio is routed through a virtual device (VB-Cable)
+    /// which allows seamless device switching for stubborn games.
+    /// </summary>
+    public bool UseAudioProxy { get; set; } = false;
+
+    /// <summary>
+    /// The device ID of the virtual audio input device (e.g., VB-Cable).
+    /// If null, the service will auto-detect VB-Cable.
+    /// </summary>
+    public string? ProxyInputDeviceId { get; set; }
+
+    /// <summary>
+    /// Buffer size in milliseconds for the audio proxy.
+    /// Lower values = less latency but more CPU usage.
+    /// Recommended: 10ms (default) for gaming.
+    /// </summary>
+    public int ProxyBufferMs { get; set; } = 10;
+
+    // ========================================
+    // Microphone Proxy Settings
+    // ========================================
+
+    /// <summary>
+    /// Whether to use the microphone proxy feature.
+    /// When enabled, microphone audio is captured from a physical mic and
+    /// forwarded to a virtual device (VB-Cable Input) for apps to capture.
+    /// </summary>
+    public bool UseMicProxy { get; set; } = false;
+
+    /// <summary>
+    /// The device ID of the physical microphone to capture audio from.
+    /// </summary>
+    public string? MicProxyInputDeviceId { get; set; }
+
+    /// <summary>
+    /// Whether to auto-start the mic proxy when the speaker proxy starts.
+    /// </summary>
+    public bool MicProxyAutoStart { get; set; } = true;
 }

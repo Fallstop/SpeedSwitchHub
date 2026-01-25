@@ -11,6 +11,7 @@ public class AutoSwitchService : IAutoSwitchService
     private readonly IHeadsetStateService _headsetStateService;
     private readonly IAudioDeviceService _audioDeviceService;
     private readonly ISettingsService _settingsService;
+    private readonly IAudioProxyService? _audioProxyService;
 
     private AutoSwitchState _currentState = AutoSwitchState.Stopped;
     private bool _isEnabled = true;
@@ -45,11 +46,13 @@ public class AutoSwitchService : IAutoSwitchService
     public AutoSwitchService(
         IHeadsetStateService headsetStateService,
         IAudioDeviceService audioDeviceService,
-        ISettingsService settingsService)
+        ISettingsService settingsService,
+        IAudioProxyService? audioProxyService = null)
     {
         _headsetStateService = headsetStateService;
         _audioDeviceService = audioDeviceService;
         _settingsService = settingsService;
+        _audioProxyService = audioProxyService;
     }
 
     public void Start()
@@ -135,6 +138,20 @@ public class AutoSwitchService : IAutoSwitchService
 
         bool speakerSuccess = _audioDeviceService.SetDefaultDevice(targetId);
 
+        // Also update the audio proxy if it's running
+        UpdateAudioProxyOutputAsync(targetId).ContinueWith(t =>
+        {
+            if (t.IsFaulted)
+                Debug.WriteLine($"[AutoSwitchService] Proxy update failed: {t.Exception?.InnerException?.Message}");
+        });
+
+        // Also update the mic proxy input if it's running
+        UpdateMicProxyInputAsync(direction).ContinueWith(t =>
+        {
+            if (t.IsFaulted)
+                Debug.WriteLine($"[AutoSwitchService] Mic proxy update failed: {t.Exception?.InnerException?.Message}");
+        });
+
         string? targetMicId = direction == SwitchDirection.ToWireless
             ? settings.WirelessMicrophoneId
             : settings.WiredMicrophoneId;
@@ -159,6 +176,69 @@ public class AutoSwitchService : IAutoSwitchService
 
         CheckConfiguredDeviceState();
         AudioSwitched?.Invoke(this, new AudioSwitchedEventArgs(direction, targetName, success));
+    }
+
+    /// <summary>
+    /// Updates the audio proxy output device if the proxy feature is enabled and running.
+    /// </summary>
+    private async Task UpdateAudioProxyOutputAsync(string targetDeviceId)
+    {
+        if (_audioProxyService == null)
+            return;
+
+        var settings = _settingsService.Settings;
+        if (!settings.UseAudioProxy)
+        {
+            Debug.WriteLine("[AutoSwitchService] Audio proxy not enabled, skipping proxy update");
+            return;
+        }
+
+        if (!_audioProxyService.IsRunning)
+        {
+            Debug.WriteLine("[AutoSwitchService] Audio proxy not running, skipping proxy update");
+            return;
+        }
+
+        Debug.WriteLine($"[AutoSwitchService] Updating audio proxy output to: {targetDeviceId}");
+        var success = await _audioProxyService.SetOutputDeviceAsync(targetDeviceId);
+        Debug.WriteLine($"[AutoSwitchService] Audio proxy update: {(success ? "success" : "failed")}");
+    }
+
+    /// <summary>
+    /// Updates the mic proxy input device if the mic proxy feature is enabled and running.
+    /// </summary>
+    private async Task UpdateMicProxyInputAsync(SwitchDirection direction)
+    {
+        if (_audioProxyService == null)
+            return;
+
+        var settings = _settingsService.Settings;
+        if (!settings.UseMicProxy)
+        {
+            Debug.WriteLine("[AutoSwitchService] Mic proxy not enabled, skipping mic proxy update");
+            return;
+        }
+
+        if (!_audioProxyService.IsRunning || !_audioProxyService.IsMicProxyEnabled)
+        {
+            Debug.WriteLine("[AutoSwitchService] Mic proxy not running, skipping mic proxy update");
+            return;
+        }
+
+        // Determine target microphone based on direction
+        string? targetMicId = direction == SwitchDirection.ToWireless
+            ? settings.WirelessMicrophoneId
+            : settings.WiredMicrophoneId;
+
+        if (string.IsNullOrEmpty(targetMicId))
+        {
+            Debug.WriteLine($"[AutoSwitchService] No {direction} microphone configured for mic proxy");
+            return;
+        }
+
+        Debug.WriteLine($"[AutoSwitchService] Updating mic proxy input to: {targetMicId}");
+        var success = await _audioProxyService.SetMicInputDeviceAsync(targetMicId);
+        Debug.WriteLine($"[AutoSwitchService] Mic proxy update: {(success ? "success" : "failed")}");
     }
 
     private void OnHeadsetStateChanged(object? sender, HeadsetStateChangedEventArgs e)
@@ -272,6 +352,20 @@ public class AutoSwitchService : IAutoSwitchService
 
         // Execute the speaker switch
         bool speakerSuccess = _audioDeviceService.SetDefaultDevice(targetId);
+
+        // Also update the audio proxy if it's running
+        UpdateAudioProxyOutputAsync(targetId).ContinueWith(t =>
+        {
+            if (t.IsFaulted)
+                Debug.WriteLine($"[AutoSwitchService] Proxy update failed: {t.Exception?.InnerException?.Message}");
+        });
+
+        // Also update the mic proxy input if it's running
+        UpdateMicProxyInputAsync(direction).ContinueWith(t =>
+        {
+            if (t.IsFaulted)
+                Debug.WriteLine($"[AutoSwitchService] Mic proxy update failed: {t.Exception?.InnerException?.Message}");
+        });
 
         // Also switch the microphone if configured
         string? targetMicId = direction == SwitchDirection.ToWireless
