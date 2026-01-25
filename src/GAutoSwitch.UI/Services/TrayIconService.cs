@@ -26,9 +26,11 @@ public sealed class TrayIconService : IDisposable
 {
     private readonly IAutoSwitchService _autoSwitchService;
     private readonly ISettingsService _settingsService;
+    private readonly IAudioDeviceService _audioDeviceService;
 
     private TaskbarIcon? _taskbarIcon;
     private MenuFlyoutItem? _toggleAutoSwitchItem;
+    private MenuFlyoutSubItem? _debugSubMenu;
     private DispatcherQueue? _dispatcherQueue;
     private bool _disposed;
 
@@ -41,10 +43,11 @@ public sealed class TrayIconService : IDisposable
     public event EventHandler? ShowWindowRequested;
     public event EventHandler? ExitRequested;
 
-    public TrayIconService(IAutoSwitchService autoSwitchService, ISettingsService settingsService)
+    public TrayIconService(IAutoSwitchService autoSwitchService, ISettingsService settingsService, IAudioDeviceService audioDeviceService)
     {
         _autoSwitchService = autoSwitchService;
         _settingsService = settingsService;
+        _audioDeviceService = audioDeviceService;
     }
 
     public void Initialize(Window window)
@@ -77,6 +80,24 @@ public sealed class TrayIconService : IDisposable
             Command = new RelayCommand(OnToggleAutoSwitch)
         };
         menuFlyout.Items.Add(_toggleAutoSwitchItem);
+
+        // Add Force Apply item
+        var forceApplyItem = new MenuFlyoutItem
+        {
+            Text = "Force Apply",
+            Command = new RelayCommand(OnForceApply)
+        };
+        menuFlyout.Items.Add(forceApplyItem);
+
+        menuFlyout.Items.Add(new MenuFlyoutSeparator());
+
+        // Add debug submenu
+        _debugSubMenu = new MenuFlyoutSubItem
+        {
+            Text = "Debug Info"
+        };
+        UpdateDebugSubMenu();
+        menuFlyout.Items.Add(_debugSubMenu);
 
         menuFlyout.Items.Add(new MenuFlyoutSeparator());
 
@@ -174,6 +195,7 @@ public sealed class TrayIconService : IDisposable
 
             _taskbarIcon.IconSource = GetIconForCurrentState();
             _taskbarIcon.ToolTipText = GetTooltipText();
+            UpdateDebugSubMenu();
         });
     }
 
@@ -257,6 +279,136 @@ public sealed class TrayIconService : IDisposable
         // Save the setting
         _settingsService.Settings.AutoSwitchEnabled = _autoSwitchService.IsEnabled;
         _ = _settingsService.SaveAsync();
+    }
+
+    private void OnForceApply()
+    {
+        _autoSwitchService.ForceApply();
+    }
+
+    private void UpdateDebugSubMenu()
+    {
+        if (_debugSubMenu == null) return;
+
+        _debugSubMenu.Items.Clear();
+
+        var settings = _settingsService.Settings;
+        const double minWidth = 350;
+
+        // Connection state section
+        var stateHeader = new MenuFlyoutItem { Text = "── Connection State ──", IsEnabled = false, MinWidth = minWidth };
+        _debugSubMenu.Items.Add(stateHeader);
+
+        var currentState = new MenuFlyoutItem
+        {
+            Text = $"State: {_autoSwitchService.CurrentState}",
+            IsEnabled = false,
+            MinWidth = minWidth
+        };
+        _debugSubMenu.Items.Add(currentState);
+
+        var enabledState = new MenuFlyoutItem
+        {
+            Text = $"Enabled: {_autoSwitchService.IsEnabled}",
+            IsEnabled = false,
+            MinWidth = minWidth
+        };
+        _debugSubMenu.Items.Add(enabledState);
+
+        var usingConfigured = new MenuFlyoutItem
+        {
+            Text = $"Using Configured: {_autoSwitchService.IsUsingConfiguredDevice}",
+            IsEnabled = false,
+            MinWidth = minWidth
+        };
+        _debugSubMenu.Items.Add(usingConfigured);
+
+        _debugSubMenu.Items.Add(new MenuFlyoutSeparator());
+
+        // Current settings section
+        var currentHeader = new MenuFlyoutItem { Text = "── Current Devices ──", IsEnabled = false, MinWidth = minWidth };
+        _debugSubMenu.Items.Add(currentHeader);
+
+        var currentPlayback = _audioDeviceService.GetDefaultDevice();
+        var currentPlaybackItem = new MenuFlyoutItem
+        {
+            Text = $"Speaker: {currentPlayback?.Name ?? "(none)"}",
+            IsEnabled = false,
+            MinWidth = minWidth
+        };
+        _debugSubMenu.Items.Add(currentPlaybackItem);
+
+        var currentCapture = _audioDeviceService.GetDefaultCaptureDevice();
+        var currentCaptureItem = new MenuFlyoutItem
+        {
+            Text = $"Mic: {currentCapture?.Name ?? "(none)"}",
+            IsEnabled = false,
+            MinWidth = minWidth
+        };
+        _debugSubMenu.Items.Add(currentCaptureItem);
+
+        _debugSubMenu.Items.Add(new MenuFlyoutSeparator());
+
+        // Goal settings section
+        var goalHeader = new MenuFlyoutItem { Text = "── Configured Devices ──", IsEnabled = false, MinWidth = minWidth };
+        _debugSubMenu.Items.Add(goalHeader);
+
+        var wirelessSpeaker = new MenuFlyoutItem
+        {
+            Text = $"Wireless: {settings.WirelessDeviceName ?? "(not set)"}",
+            IsEnabled = false,
+            MinWidth = minWidth
+        };
+        _debugSubMenu.Items.Add(wirelessSpeaker);
+
+        var wiredSpeaker = new MenuFlyoutItem
+        {
+            Text = $"Wired: {settings.WiredDeviceName ?? "(not set)"}",
+            IsEnabled = false,
+            MinWidth = minWidth
+        };
+        _debugSubMenu.Items.Add(wiredSpeaker);
+
+        var wirelessMic = new MenuFlyoutItem
+        {
+            Text = $"Wireless Mic: {settings.WirelessMicrophoneName ?? "(not set)"}",
+            IsEnabled = false,
+            MinWidth = minWidth
+        };
+        _debugSubMenu.Items.Add(wirelessMic);
+
+        var wiredMic = new MenuFlyoutItem
+        {
+            Text = $"Wired Mic: {settings.WiredMicrophoneName ?? "(not set)"}",
+            IsEnabled = false,
+            MinWidth = minWidth
+        };
+        _debugSubMenu.Items.Add(wiredMic);
+
+        // Last switch info
+        if (_autoSwitchService.LastSwitchTime.HasValue)
+        {
+            _debugSubMenu.Items.Add(new MenuFlyoutSeparator());
+
+            var lastSwitchHeader = new MenuFlyoutItem { Text = "── Last Switch ──", IsEnabled = false, MinWidth = minWidth };
+            _debugSubMenu.Items.Add(lastSwitchHeader);
+
+            var lastSwitchTime = new MenuFlyoutItem
+            {
+                Text = $"Time: {_autoSwitchService.LastSwitchTime:HH:mm:ss}",
+                IsEnabled = false,
+                MinWidth = minWidth
+            };
+            _debugSubMenu.Items.Add(lastSwitchTime);
+
+            var lastSwitchDesc = new MenuFlyoutItem
+            {
+                Text = $"{_autoSwitchService.LastSwitchDescription ?? "(none)"}",
+                IsEnabled = false,
+                MinWidth = minWidth
+            };
+            _debugSubMenu.Items.Add(lastSwitchDesc);
+        }
     }
 
     private void OnShowWindow()

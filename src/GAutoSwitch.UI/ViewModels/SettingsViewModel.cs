@@ -40,6 +40,8 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty]
     private bool _isLoading;
 
+    private bool _isRefreshingDevices;
+
     [ObservableProperty]
     private string _currentDefaultSpeaker = "None";
 
@@ -230,37 +232,45 @@ public partial class SettingsViewModel : ObservableObject
 
     private void RefreshDevices()
     {
-        var playbackDevices = _audioDeviceService.GetPlaybackDevices();
-        var captureDevices = _audioDeviceService.GetCaptureDevices();
-        var settings = _settingsService.Settings;
-
-        PlaybackDevices.Clear();
-        foreach (var device in playbackDevices)
+        _isRefreshingDevices = true;
+        try
         {
-            PlaybackDevices.Add(device);
-        }
+            var playbackDevices = _audioDeviceService.GetPlaybackDevices();
+            var captureDevices = _audioDeviceService.GetCaptureDevices();
+            var settings = _settingsService.Settings;
 
-        CaptureDevices.Clear();
-        foreach (var device in captureDevices)
+            PlaybackDevices.Clear();
+            foreach (var device in playbackDevices)
+            {
+                PlaybackDevices.Add(device);
+            }
+
+            CaptureDevices.Clear();
+            foreach (var device in captureDevices)
+            {
+                CaptureDevices.Add(device);
+            }
+
+            // Restore selected devices using smart matching (each device matched independently)
+            SelectedWirelessSpeaker = FindDevice(PlaybackDevices,
+                settings.WirelessDeviceId, settings.WirelessDeviceName);
+
+            SelectedWiredSpeaker = FindDevice(PlaybackDevices,
+                settings.WiredDeviceId, settings.WiredDeviceName);
+
+            SelectedWirelessMicrophone = FindDevice(CaptureDevices,
+                settings.WirelessMicrophoneId, settings.WirelessMicrophoneName);
+
+            SelectedWiredMicrophone = FindDevice(CaptureDevices,
+                settings.WiredMicrophoneId, settings.WiredMicrophoneName);
+
+            // Update current Windows defaults display
+            UpdateCurrentDefaults();
+        }
+        finally
         {
-            CaptureDevices.Add(device);
+            _isRefreshingDevices = false;
         }
-
-        // Restore selected devices using smart matching (each device matched independently)
-        SelectedWirelessSpeaker = FindDevice(PlaybackDevices,
-            settings.WirelessDeviceId, settings.WirelessDeviceName);
-
-        SelectedWiredSpeaker = FindDevice(PlaybackDevices,
-            settings.WiredDeviceId, settings.WiredDeviceName);
-
-        SelectedWirelessMicrophone = FindDevice(CaptureDevices,
-            settings.WirelessMicrophoneId, settings.WirelessMicrophoneName);
-
-        SelectedWiredMicrophone = FindDevice(CaptureDevices,
-            settings.WiredMicrophoneId, settings.WiredMicrophoneName);
-
-        // Update current Windows defaults display
-        UpdateCurrentDefaults();
     }
 
     private void UpdateCurrentDefaults()
@@ -351,6 +361,7 @@ public partial class SettingsViewModel : ObservableObject
 
     partial void OnSelectedWirelessSpeakerChanged(AudioDevice? value)
     {
+        if (_isRefreshingDevices) return;
         _settingsService.Settings.WirelessDeviceId = value?.Id;
         _settingsService.Settings.WirelessDeviceName = value?.Name;
         _ = _settingsService.SaveAsync();
@@ -358,6 +369,7 @@ public partial class SettingsViewModel : ObservableObject
 
     partial void OnSelectedWiredSpeakerChanged(AudioDevice? value)
     {
+        if (_isRefreshingDevices) return;
         _settingsService.Settings.WiredDeviceId = value?.Id;
         _settingsService.Settings.WiredDeviceName = value?.Name;
         _ = _settingsService.SaveAsync();
@@ -365,6 +377,7 @@ public partial class SettingsViewModel : ObservableObject
 
     partial void OnSelectedWirelessMicrophoneChanged(AudioDevice? value)
     {
+        if (_isRefreshingDevices) return;
         _settingsService.Settings.WirelessMicrophoneId = value?.Id;
         _settingsService.Settings.WirelessMicrophoneName = value?.Name;
         _ = _settingsService.SaveAsync();
@@ -372,6 +385,7 @@ public partial class SettingsViewModel : ObservableObject
 
     partial void OnSelectedWiredMicrophoneChanged(AudioDevice? value)
     {
+        if (_isRefreshingDevices) return;
         _settingsService.Settings.WiredMicrophoneId = value?.Id;
         _settingsService.Settings.WiredMicrophoneName = value?.Name;
         _ = _settingsService.SaveAsync();

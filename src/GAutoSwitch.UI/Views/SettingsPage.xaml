@@ -94,7 +94,7 @@
                     Margin="0,8,0,0"
                     IsClosable="False">
                     <InfoBar.Content>
-                        <Grid>
+                        <Grid Padding="0,0,0,12">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
@@ -273,11 +273,10 @@
                     </Border>
                 </Grid>
 
-                <!-- Manual Sync Card (shown when config matches, for manual override) -->
+                <!-- Manual Sync Card (always visible for manual override) -->
                 <Border
                     Style="{StaticResource SettingsCardStyle}"
-                    Margin="0,0,0,8"
-                    Visibility="{x:Bind ViewModel.IsUsingConfiguredDevice, Mode=OneWay}">
+                    Margin="0,0,0,8">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto"/>

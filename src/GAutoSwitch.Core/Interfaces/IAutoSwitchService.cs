@@ -46,6 +46,11 @@ public interface IAutoSwitchService : IDisposable
     void Stop();
 
     /// <summary>
+    /// Forces an immediate switch based on current headset state, ignoring normal conditions.
+    /// </summary>
+    void ForceApply();
+
+    /// <summary>
     /// Raised when an audio device switch is performed.
     /// </summary>
     event EventHandler<AudioSwitchedEventArgs>? AudioSwitched;

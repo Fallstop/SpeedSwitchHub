@@ -42,6 +42,8 @@ public sealed class AudioSwitcher : IAudioSwitcher
         {
             // The device ID from WinRT enumeration needs to be converted to MMDevice format
             string mmDeviceId = ConvertToMMDeviceId(deviceId);
+            Debug.WriteLine($"[AudioSwitcher] SetDefaultDevice: flow={flow}, original={deviceId}");
+            Debug.WriteLine($"[AudioSwitcher] SetDefaultDevice: converted={mmDeviceId}");
 
             // Set default endpoint for all roles
             bool success = true;
@@ -134,17 +136,29 @@ public sealed class AudioSwitcher : IAudioSwitcher
     /// </summary>
     private static string ConvertToMMDeviceId(string deviceId)
     {
+        Debug.WriteLine($"[AudioSwitcher] ConvertToMMDeviceId input: {deviceId}");
+
         // If it's already in MMDevice format, return as-is
         if (deviceId.StartsWith("{"))
+        {
+            Debug.WriteLine($"[AudioSwitcher] Already in MMDevice format");
             return deviceId;
+        }
 
         // Extract the MMDevice ID from the WinRT format
-        // Look for the pattern {digits}.{guid}
-        int startIndex = deviceId.IndexOf("{0.", StringComparison.Ordinal);
-        if (startIndex < 0)
+        // Look for any pattern like {digit.digit.digit.digits}.{guid}
+        // Render devices: {0.0.0.00000000}.{guid}
+        // Capture devices: {0.0.1.00000000}.{guid} or similar
+        int startIndex = -1;
+
+        // Find any opening brace followed by a digit
+        for (int i = 0; i < deviceId.Length - 1; i++)
         {
-            // Try alternate pattern for capture devices
-            startIndex = deviceId.IndexOf("{1.", StringComparison.Ordinal);
+            if (deviceId[i] == '{' && char.IsDigit(deviceId[i + 1]))
+            {
+                startIndex = i;
+                break;
+            }
         }
 
         if (startIndex >= 0)
@@ -154,10 +168,13 @@ public sealed class AudioSwitcher : IAudioSwitcher
             if (endIndex < 0)
                 endIndex = deviceId.Length;
 
-            return deviceId.Substring(startIndex, endIndex - startIndex);
+            string result = deviceId.Substring(startIndex, endIndex - startIndex);
+            Debug.WriteLine($"[AudioSwitcher] Converted to: {result}");
+            return result;
         }
 
         // Return the original ID if we can't parse it
+        Debug.WriteLine($"[AudioSwitcher] Could not convert, returning original");
         return deviceId;
     }
 }

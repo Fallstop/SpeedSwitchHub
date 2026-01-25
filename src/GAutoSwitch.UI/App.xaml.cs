@@ -114,7 +114,7 @@ private Window? _window;
         _ = rootFrame.Navigate(typeof(ShellPage), e.Arguments);
 
         // Initialize tray icon with dependencies for dynamic state updates
-        _trayIconService = new TrayIconService(AutoSwitchService, SettingsService);
+        _trayIconService = new TrayIconService(AutoSwitchService, SettingsService, AudioDeviceService);
         _trayIconService.ShowWindowRequested += OnShowWindowRequested;
         _trayIconService.ExitRequested += OnExitRequested;
         _trayIconService.Initialize(_window);

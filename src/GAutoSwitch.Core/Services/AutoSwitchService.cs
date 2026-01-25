@@ -93,6 +93,74 @@ public class AutoSwitchService : IAutoSwitchService
         SetState(AutoSwitchState.Stopped);
     }
 
+    public void ForceApply()
+    {
+        Debug.WriteLine("[AutoSwitchService] Force apply requested");
+
+        var headsetState = _headsetStateService.CurrentState;
+
+        switch (headsetState)
+        {
+            case HeadsetConnectionState.Offline:
+                ForceSwitch(SwitchDirection.ToWired);
+                break;
+
+            case HeadsetConnectionState.Online:
+                ForceSwitch(SwitchDirection.ToWireless);
+                break;
+
+            default:
+                Debug.WriteLine($"[AutoSwitchService] Cannot force apply in state: {headsetState}");
+                break;
+        }
+    }
+
+    private void ForceSwitch(SwitchDirection direction)
+    {
+        Debug.WriteLine($"[AutoSwitchService] Force switching: {direction}");
+
+        var settings = _settingsService.Settings;
+        var wirelessId = settings.WirelessDeviceId;
+        var wiredId = settings.WiredDeviceId;
+
+        if (string.IsNullOrEmpty(wirelessId) || string.IsNullOrEmpty(wiredId))
+        {
+            Debug.WriteLine("[AutoSwitchService] Cannot force switch: devices not configured");
+            return;
+        }
+
+        string targetId = direction == SwitchDirection.ToWireless ? wirelessId : wiredId;
+        var targetDevice = _audioDeviceService.GetDeviceById(targetId);
+        string targetName = targetDevice?.Name ?? (direction == SwitchDirection.ToWireless ? "Wireless Device" : "Wired Device");
+
+        bool speakerSuccess = _audioDeviceService.SetDefaultDevice(targetId);
+
+        string? targetMicId = direction == SwitchDirection.ToWireless
+            ? settings.WirelessMicrophoneId
+            : settings.WiredMicrophoneId;
+
+        bool micSuccess = true;
+        string? micName = null;
+        if (!string.IsNullOrEmpty(targetMicId))
+        {
+            micSuccess = _audioDeviceService.SetDefaultCaptureDevice(targetMicId);
+            var micDevice = _audioDeviceService.GetDeviceById(targetMicId);
+            micName = micDevice?.Name;
+        }
+
+        bool success = speakerSuccess && micSuccess;
+
+        LastSwitchTime = DateTime.Now;
+        LastSwitchDescription = success
+            ? $"Force switched to {targetName}" + (micName != null ? $" + {micName}" : "")
+            : $"Failed to force switch to {targetName}";
+
+        Debug.WriteLine($"[AutoSwitchService] Force switch result: {LastSwitchDescription}");
+
+        CheckConfiguredDeviceState();
+        AudioSwitched?.Invoke(this, new AudioSwitchedEventArgs(direction, targetName, success));
+    }
+
     private void OnHeadsetStateChanged(object? sender, HeadsetStateChangedEventArgs e)
     {
         Debug.WriteLine($"[AutoSwitchService] Headset state changed: {e.PreviousState} -> {e.NewState}");
@@ -202,12 +270,29 @@ public class AutoSwitchService : IAutoSwitchService
             return;
         }
 
-        // Execute the switch
-        bool success = _audioDeviceService.SetDefaultDevice(targetId);
+        // Execute the speaker switch
+        bool speakerSuccess = _audioDeviceService.SetDefaultDevice(targetId);
+
+        // Also switch the microphone if configured
+        string? targetMicId = direction == SwitchDirection.ToWireless
+            ? settings.WirelessMicrophoneId
+            : settings.WiredMicrophoneId;
+
+        bool micSuccess = true;
+        string? micName = null;
+        if (!string.IsNullOrEmpty(targetMicId))
+        {
+            micSuccess = _audioDeviceService.SetDefaultCaptureDevice(targetMicId);
+            var micDevice = _audioDeviceService.GetDeviceById(targetMicId);
+            micName = micDevice?.Name;
+            Debug.WriteLine($"[AutoSwitchService] Microphone switch to '{micName ?? targetMicId}': {(micSuccess ? "success" : "failed")}");
+        }
+
+        bool success = speakerSuccess && micSuccess;
 
         LastSwitchTime = DateTime.Now;
         LastSwitchDescription = success
-            ? $"Switched to {targetName}"
+            ? $"Switched to {targetName}" + (micName != null ? $" + {micName}" : "")
             : $"Failed to switch to {targetName}";
 
         Debug.WriteLine($"[AutoSwitchService] Switch result: {LastSwitchDescription}");
