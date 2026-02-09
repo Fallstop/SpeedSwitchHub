@@ -1,10 +1,11 @@
 //! Lock-free ring buffer for low-latency audio transfer between threads
 
+use std::cell::UnsafeCell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// A lock-free single-producer single-consumer ring buffer for audio samples
 pub struct AudioRingBuffer {
-    buffer: Box<[f32]>,
+    buffer: UnsafeCell<Box<[f32]>>,
     capacity: usize,
     write_pos: AtomicUsize,
     read_pos: AtomicUsize,
@@ -17,7 +18,7 @@ impl AudioRingBuffer {
         let capacity = capacity.next_power_of_two();
 
         Self {
-            buffer: vec![0.0f32; capacity].into_boxed_slice(),
+            buffer: UnsafeCell::new(vec![0.0f32; capacity].into_boxed_slice()),
             capacity,
             write_pos: AtomicUsize::new(0),
             read_pos: AtomicUsize::new(0),
@@ -42,14 +43,12 @@ impl AudioRingBuffer {
             return 0;
         }
 
-        // Get mutable access to buffer through raw pointer (safe due to SPSC design)
-        let buffer_ptr = self.buffer.as_ptr() as *mut f32;
-
+        // SAFETY: Single producer ensures exclusive write access to these indices.
+        // UnsafeCell communicates interior mutability to the compiler.
+        let buffer = unsafe { &mut *self.buffer.get() };
         for i in 0..to_write {
             let idx = (write_pos + i) & (self.capacity - 1);
-            unsafe {
-                *buffer_ptr.add(idx) = samples[i];
-            }
+            buffer[idx] = samples[i];
         }
 
         // Update write position with release ordering
@@ -77,9 +76,11 @@ impl AudioRingBuffer {
             return 0;
         }
 
+        // SAFETY: Single consumer ensures exclusive read access to these indices.
+        let buffer = unsafe { &*self.buffer.get() };
         for i in 0..to_read {
             let idx = (read_pos + i) & (self.capacity - 1);
-            samples[i] = self.buffer[idx];
+            samples[i] = buffer[idx];
         }
 
         // Update read position with release ordering
@@ -90,6 +91,7 @@ impl AudioRingBuffer {
     }
 
     /// Get the number of samples currently in the buffer
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         let write_pos = self.write_pos.load(Ordering::Acquire);
         let read_pos = self.read_pos.load(Ordering::Acquire);
@@ -102,16 +104,19 @@ impl AudioRingBuffer {
     }
 
     /// Check if the buffer is empty
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
     /// Get the capacity of the buffer
+    #[allow(dead_code)]
     pub fn capacity(&self) -> usize {
         self.capacity - 1 // One slot is always kept empty
     }
 
     /// Clear the buffer
+    #[allow(dead_code)]
     pub fn clear(&self) {
         self.read_pos.store(0, Ordering::Release);
         self.write_pos.store(0, Ordering::Release);

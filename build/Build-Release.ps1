@@ -142,6 +142,45 @@ if (-not $SkipBuild) {
         Write-Error "dotnet publish failed"
         exit 1
     }
+
+    # WinUI 3 workaround: dotnet publish --output doesn't copy .pri, .xbf, or Assets.
+    # Copy them from the build output directory.
+    $projectDir = Split-Path $projectPath
+    $tfm = "net10.0-windows10.0.19041.0"
+    $buildOutputDir = Join-Path $projectDir "bin\$Configuration\$tfm\$rid"
+
+    Write-Host "Copying WinUI resources from build output..." -ForegroundColor Yellow
+
+    # Copy app .pri file
+    $appPri = Join-Path $buildOutputDir "GAutoSwitch.UI.pri"
+    if (Test-Path $appPri) {
+        Copy-Item $appPri -Destination $publishDir
+        Write-Host "  Copied GAutoSwitch.UI.pri" -ForegroundColor Green
+    } else {
+        Write-Host "  Warning: GAutoSwitch.UI.pri not found at $appPri" -ForegroundColor Yellow
+    }
+
+    # Copy .xbf files (compiled XAML)
+    Get-ChildItem -Path $buildOutputDir -Filter "*.xbf" -Recurse | ForEach-Object {
+        $relativePath = $_.FullName.Substring($buildOutputDir.Length + 1)
+        $destPath = Join-Path $publishDir $relativePath
+        $destDir = Split-Path $destPath
+        if (-not (Test-Path $destDir)) {
+            New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+        }
+        Copy-Item $_.FullName -Destination $destPath
+        Write-Host "  Copied $relativePath" -ForegroundColor Green
+    }
+
+    # Copy Assets folder
+    $assetsDir = Join-Path $buildOutputDir "Assets"
+    if (Test-Path $assetsDir) {
+        Copy-Item $assetsDir -Destination $publishDir -Recurse -Force
+        Write-Host "  Copied Assets/" -ForegroundColor Green
+    } else {
+        Write-Host "  Warning: Assets directory not found at $assetsDir" -ForegroundColor Yellow
+    }
+
     Write-Host "Publish completed" -ForegroundColor Green
 }
 else {

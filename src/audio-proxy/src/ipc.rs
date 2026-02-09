@@ -5,7 +5,7 @@ use std::os::windows::ffi::OsStrExt;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
-use log::{debug, info};
+use log::debug;
 use serde::{Deserialize, Serialize};
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE, GENERIC_READ, GENERIC_WRITE};
@@ -230,10 +230,12 @@ impl Drop for IpcServer {
 }
 
 /// Named pipe client for sending commands
+#[allow(dead_code)]
 pub struct IpcClient {
     pipe_handle: HANDLE,
 }
 
+#[allow(dead_code)]
 impl IpcClient {
     /// Connect to the IPC server
     pub fn connect() -> Result<Self> {

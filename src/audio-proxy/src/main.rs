@@ -20,18 +20,21 @@ use anyhow::{Context, Result};
 use log::{error, info, warn};
 use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
 
-use audio_stream::{CaptureStream, RenderStream};
+use audio_stream::{AudioFormat, CaptureStream, RenderStream};
 use ipc::{IpcCommand, IpcServer};
 use ring_buffer::AudioRingBuffer;
 
 /// Default buffer size in milliseconds
 const DEFAULT_BUFFER_MS: u32 = 10;
 
-/// Sample rate (48kHz is standard for gaming)
-const SAMPLE_RATE: u32 = 48000;
+/// Default sample rate for buffer size estimation (actual rate comes from device)
+const DEFAULT_SAMPLE_RATE: u32 = 48000;
 
-/// Number of channels (stereo)
-const CHANNELS: u16 = 2;
+/// Default channel count for buffer size estimation
+const DEFAULT_CHANNELS: u16 = 2;
+
+/// Max consecutive errors before giving up on stream recovery
+const MAX_RECOVERY_ATTEMPTS: u32 = 5;
 
 /// Parsed command line arguments
 struct Args {
@@ -166,14 +169,11 @@ fn parse_args() -> Result<Args> {
 
 /// Shared state for microphone proxy
 struct MicState {
-    /// Ring buffer for mic audio data
     buffer: Arc<AudioRingBuffer>,
-    /// Current mic input device ID (hot-swappable)
     input_id: Arc<RwLock<String>>,
-    /// Fixed mic output device ID (VB-Cable Input)
     output_id: String,
-    /// Whether mic proxy is enabled
     enabled: Arc<AtomicBool>,
+    capture_format: Arc<RwLock<Option<AudioFormat>>>,
 }
 
 fn run_proxy(args: &Args) -> Result<()> {
@@ -183,14 +183,17 @@ fn run_proxy(args: &Args) -> Result<()> {
     // Set up Ctrl+C handler
     ctrlc_handler(running.clone());
 
-    // Calculate buffer size in samples
-    let buffer_samples = (SAMPLE_RATE * args.buffer_ms / 1000) as usize * CHANNELS as usize;
+    // Calculate buffer size in samples (estimate - actual format comes from device)
+    let buffer_samples = (DEFAULT_SAMPLE_RATE * args.buffer_ms / 1000) as usize * DEFAULT_CHANNELS as usize;
 
-    // Create ring buffer for speaker audio data (double the buffer for safety)
+    // Create ring buffer for speaker audio data
     let speaker_buffer = Arc::new(AudioRingBuffer::new(buffer_samples * 4));
 
     // Create output device ID holder for hot-swapping
     let current_output_id = Arc::new(RwLock::new(args.speaker_out.clone()));
+
+    // Shared capture format so render thread can do conversion if needed
+    let speaker_capture_format: Arc<RwLock<Option<AudioFormat>>> = Arc::new(RwLock::new(None));
 
     // Create mic state if mic proxy is configured
     let mic_state = if let (Some(mic_in), Some(mic_out)) = (&args.mic_in, &args.mic_out) {
@@ -200,6 +203,7 @@ fn run_proxy(args: &Args) -> Result<()> {
             input_id: Arc::new(RwLock::new(mic_in.clone())),
             output_id: mic_out.clone(),
             enabled: Arc::new(AtomicBool::new(true)),
+            capture_format: Arc::new(RwLock::new(None)),
         })
     } else {
         None
@@ -210,7 +214,7 @@ fn run_proxy(args: &Args) -> Result<()> {
     let ipc_output_id = current_output_id.clone();
     let ipc_mic_input_id = mic_state.as_ref().map(|s| s.input_id.clone());
     let ipc_mic_enabled = mic_state.as_ref().map(|s| s.enabled.clone());
-    let ipc_handle = thread::spawn(move || {
+    let _ipc_handle = thread::spawn(move || {
         if let Err(e) = run_ipc_server(ipc_running, ipc_output_id, ipc_mic_input_id, ipc_mic_enabled) {
             error!("IPC server error: {}", e);
         }
@@ -220,8 +224,8 @@ fn run_proxy(args: &Args) -> Result<()> {
     let capture_running = running.clone();
     let capture_buffer = speaker_buffer.clone();
     let capture_input_id = args.speaker_in.clone();
+    let capture_format_shared = speaker_capture_format.clone();
     let capture_handle = thread::spawn(move || {
-        // Initialize COM for this thread
         unsafe {
             if CoInitializeEx(None, COINIT_MULTITHREADED).is_err() {
                 error!("Failed to initialize COM in speaker capture thread");
@@ -229,22 +233,22 @@ fn run_proxy(args: &Args) -> Result<()> {
             }
         }
 
-        if let Err(e) = run_speaker_capture_loop(&capture_input_id, capture_buffer, capture_running) {
+        if let Err(e) = run_speaker_capture_loop(
+            &capture_input_id, capture_buffer, capture_running, capture_format_shared,
+        ) {
             error!("Speaker capture loop error: {}", e);
         }
 
-        unsafe {
-            CoUninitialize();
-        }
+        unsafe { CoUninitialize(); }
     });
 
     // Start speaker render thread
     let render_running = running.clone();
     let render_buffer = speaker_buffer.clone();
     let render_output_id = current_output_id.clone();
+    let render_capture_format = speaker_capture_format.clone();
     let buffer_ms = args.buffer_ms;
     let render_handle = thread::spawn(move || {
-        // Initialize COM for this thread
         unsafe {
             if CoInitializeEx(None, COINIT_MULTITHREADED).is_err() {
                 error!("Failed to initialize COM in speaker render thread");
@@ -252,22 +256,22 @@ fn run_proxy(args: &Args) -> Result<()> {
             }
         }
 
-        if let Err(e) = run_speaker_render_loop(render_buffer, render_output_id, render_running, buffer_ms) {
+        if let Err(e) = run_speaker_render_loop(
+            render_buffer, render_output_id, render_running, buffer_ms, render_capture_format,
+        ) {
             error!("Speaker render loop error: {}", e);
         }
 
-        unsafe {
-            CoUninitialize();
-        }
+        unsafe { CoUninitialize(); }
     });
 
     // Start mic threads if configured
     let mic_handles = if let Some(ref mic) = mic_state {
-        // Mic capture thread
         let mic_capture_running = running.clone();
         let mic_capture_buffer = mic.buffer.clone();
         let mic_capture_input_id = mic.input_id.clone();
         let mic_capture_enabled = mic.enabled.clone();
+        let mic_capture_format = mic.capture_format.clone();
         let mic_capture_handle = thread::spawn(move || {
             unsafe {
                 if CoInitializeEx(None, COINIT_MULTITHREADED).is_err() {
@@ -277,24 +281,20 @@ fn run_proxy(args: &Args) -> Result<()> {
             }
 
             if let Err(e) = run_mic_capture_loop(
-                mic_capture_input_id,
-                mic_capture_buffer,
-                mic_capture_running,
-                mic_capture_enabled,
+                mic_capture_input_id, mic_capture_buffer, mic_capture_running,
+                mic_capture_enabled, mic_capture_format,
             ) {
                 error!("Mic capture loop error: {}", e);
             }
 
-            unsafe {
-                CoUninitialize();
-            }
+            unsafe { CoUninitialize(); }
         });
 
-        // Mic render thread
         let mic_render_running = running.clone();
         let mic_render_buffer = mic.buffer.clone();
         let mic_render_output_id = mic.output_id.clone();
         let mic_render_enabled = mic.enabled.clone();
+        let mic_render_capture_format = mic.capture_format.clone();
         let mic_render_handle = thread::spawn(move || {
             unsafe {
                 if CoInitializeEx(None, COINIT_MULTITHREADED).is_err() {
@@ -304,18 +304,13 @@ fn run_proxy(args: &Args) -> Result<()> {
             }
 
             if let Err(e) = run_mic_render_loop(
-                &mic_render_output_id,
-                mic_render_buffer,
-                mic_render_running,
-                mic_render_enabled,
-                buffer_ms,
+                &mic_render_output_id, mic_render_buffer, mic_render_running,
+                mic_render_enabled, buffer_ms, mic_render_capture_format,
             ) {
                 error!("Mic render loop error: {}", e);
             }
 
-            unsafe {
-                CoUninitialize();
-            }
+            unsafe { CoUninitialize(); }
         });
 
         Some((mic_capture_handle, mic_render_handle))
@@ -330,48 +325,184 @@ fn run_proxy(args: &Args) -> Result<()> {
 
     info!("Shutting down...");
 
-    // Wait for threads to finish
+    // Wait for audio threads to finish (they check the running flag)
     let _ = capture_handle.join();
     let _ = render_handle.join();
     if let Some((mic_capture, mic_render)) = mic_handles {
         let _ = mic_capture.join();
         let _ = mic_render.join();
     }
-    let _ = ipc_handle.join();
+    // IPC thread is detached (_ipc_handle dropped) - it may be blocked in
+    // ConnectNamedPipe, so we let it be cleaned up on process exit.
 
     info!("Audio Proxy stopped.");
     Ok(())
 }
 
+// ── Audio format conversion utilities ──────────────────────────────────────
+
+/// Convert channel count: upmix, downmix, or passthrough
+fn convert_channels(input: &[f32], in_ch: usize, out_ch: usize, output: &mut Vec<f32>) {
+    let frames = input.len() / in_ch;
+    output.clear();
+    output.reserve(frames * out_ch);
+
+    for frame in 0..frames {
+        let in_start = frame * in_ch;
+        if out_ch <= in_ch {
+            // Downmix: take first out_ch channels (simple truncation)
+            // For stereo->mono, average L+R
+            if in_ch == 2 && out_ch == 1 {
+                output.push((input[in_start] + input[in_start + 1]) * 0.5);
+            } else {
+                for ch in 0..out_ch {
+                    output.push(input[in_start + ch]);
+                }
+            }
+        } else {
+            // Upmix: copy available channels, duplicate first for the rest
+            for ch in 0..out_ch {
+                if ch < in_ch {
+                    output.push(input[in_start + ch]);
+                } else {
+                    output.push(input[in_start]); // duplicate first channel
+                }
+            }
+        }
+    }
+}
+
+/// Resample audio using linear interpolation
+fn resample(input: &[f32], in_rate: u32, out_rate: u32, channels: usize, output: &mut Vec<f32>) {
+    let in_frames = input.len() / channels;
+    if in_frames == 0 {
+        output.clear();
+        return;
+    }
+
+    let ratio = out_rate as f64 / in_rate as f64;
+    let out_frames = (in_frames as f64 * ratio).ceil() as usize;
+    output.clear();
+    output.reserve(out_frames * channels);
+
+    for frame in 0..out_frames {
+        let src_pos = frame as f64 / ratio;
+        let src_idx = src_pos as usize;
+        let frac = (src_pos - src_idx as f64) as f32;
+
+        let idx0 = src_idx.min(in_frames - 1);
+        let idx1 = (src_idx + 1).min(in_frames - 1);
+
+        for ch in 0..channels {
+            let s0 = input[idx0 * channels + ch];
+            let s1 = input[idx1 * channels + ch];
+            output.push(s0 + frac * (s1 - s0));
+        }
+    }
+}
+
+/// Check if two formats need conversion
+fn formats_need_conversion(cap: &AudioFormat, rnd: &AudioFormat) -> bool {
+    cap.sample_rate != rnd.sample_rate || cap.channels != rnd.channels
+}
+
+/// Convert audio from capture format to render format.
+/// Uses pre-allocated scratch buffer to avoid repeated allocations.
+fn convert_audio(
+    input: &[f32],
+    cap_fmt: &AudioFormat,
+    rnd_fmt: &AudioFormat,
+    scratch: &mut Vec<f32>,
+) -> Vec<f32> {
+    let mut current = input;
+    let mut temp = Vec::new();
+
+    // Channel conversion first (if needed)
+    if cap_fmt.channels != rnd_fmt.channels {
+        convert_channels(current, cap_fmt.channels as usize, rnd_fmt.channels as usize, scratch);
+        std::mem::swap(scratch, &mut temp);
+        current = &temp;
+    }
+
+    // Then resample (if needed)
+    if cap_fmt.sample_rate != rnd_fmt.sample_rate {
+        resample(current, cap_fmt.sample_rate, rnd_fmt.sample_rate, rnd_fmt.channels as usize, scratch);
+        return std::mem::take(scratch);
+    }
+
+    current.to_vec()
+}
+
+// ── Stream creation with error recovery ────────────────────────────────────
+
+fn create_and_start_capture(device_id: &str) -> Result<CaptureStream> {
+    let mut capture = CaptureStream::new(device_id)
+        .context("Failed to create capture stream")?;
+    capture.start().context("Failed to start capture")?;
+    Ok(capture)
+}
+
+fn create_and_start_render(device_id: &str) -> Result<RenderStream> {
+    let mut render = RenderStream::new(device_id)
+        .context("Failed to create render stream")?;
+    render.start().context("Failed to start render")?;
+    Ok(render)
+}
+
+// ── Speaker loops ──────────────────────────────────────────────────────────
+
 fn run_speaker_capture_loop(
     input_device_id: &str,
     buffer: Arc<AudioRingBuffer>,
     running: Arc<AtomicBool>,
+    capture_format: Arc<RwLock<Option<AudioFormat>>>,
 ) -> Result<()> {
     info!("Starting speaker capture from device: {}", input_device_id);
 
-    let mut capture = CaptureStream::new(input_device_id, SAMPLE_RATE, CHANNELS)
-        .context("Failed to create capture stream")?;
+    let mut capture = create_and_start_capture(input_device_id)?;
 
-    capture.start().context("Failed to start capture")?;
+    // Share the format with the render thread
+    if let Some(fmt) = capture.format() {
+        *capture_format.write().unwrap() = Some(fmt.clone());
+    }
 
     let mut temp_buffer = vec![0.0f32; 4096];
+    let mut error_count: u32 = 0;
 
     while running.load(Ordering::SeqCst) {
         match capture.read(&mut temp_buffer) {
             Ok(samples_read) if samples_read > 0 => {
+                error_count = 0;
                 let written = buffer.write(&temp_buffer[..samples_read]);
                 if written < samples_read {
                     warn!("Speaker ring buffer overflow: {} samples dropped", samples_read - written);
                 }
             }
             Ok(_) => {
-                // No data available, wait a bit
                 thread::sleep(Duration::from_micros(500));
             }
             Err(e) => {
-                error!("Speaker capture error: {}", e);
-                thread::sleep(Duration::from_millis(10));
+                error_count += 1;
+                error!("Speaker capture error (attempt {}): {}", error_count, e);
+
+                if error_count >= MAX_RECOVERY_ATTEMPTS {
+                    return Err(e.context("Too many consecutive capture errors, giving up"));
+                }
+
+                warn!("Attempting to recover speaker capture stream...");
+                thread::sleep(Duration::from_secs(1));
+                match create_and_start_capture(input_device_id) {
+                    Ok(new_capture) => {
+                        capture = new_capture;
+                        if let Some(fmt) = capture.format() {
+                            *capture_format.write().unwrap() = Some(fmt.clone());
+                        }
+                        info!("Speaker capture stream recovered");
+                    }
+                    Err(e) => {
+                        error!("Failed to recover speaker capture: {}", e);
+                    }
+                }
             }
         }
     }
@@ -386,50 +517,96 @@ fn run_speaker_render_loop(
     output_device_id: Arc<RwLock<String>>,
     running: Arc<AtomicBool>,
     buffer_ms: u32,
+    capture_format: Arc<RwLock<Option<AudioFormat>>>,
 ) -> Result<()> {
     let device_id = output_device_id.read().unwrap().clone();
     info!("Starting speaker render to device: {}", device_id);
 
-    let mut render = RenderStream::new(&device_id, SAMPLE_RATE, CHANNELS)
-        .context("Failed to create render stream")?;
-
-    render.start().context("Failed to start render")?;
-
+    let mut render = create_and_start_render(&device_id)?;
     let mut current_device_id = device_id;
     let mut temp_buffer = vec![0.0f32; 4096];
+    let mut conversion_scratch = Vec::new();
+    let mut error_count: u32 = 0;
 
-    // Pre-fill buffer to reduce initial latency issues
-    let prefill_samples = (SAMPLE_RATE * buffer_ms / 1000) as usize * CHANNELS as usize;
+    // Pre-fill buffer with silence
+    let render_channels = render.format().map(|f| f.channels as usize).unwrap_or(2);
+    let render_rate = render.format().map(|f| f.sample_rate).unwrap_or(DEFAULT_SAMPLE_RATE);
+    let prefill_samples = (render_rate * buffer_ms / 1000) as usize * render_channels;
     let silence = vec![0.0f32; prefill_samples];
     let _ = render.write(&silence);
 
     while running.load(Ordering::SeqCst) {
-        // Check if output device changed
+        // Check if output device changed (hot-swap)
         {
             let new_device_id = output_device_id.read().unwrap().clone();
             if new_device_id != current_device_id {
                 info!("Switching speaker output to: {}", new_device_id);
                 render.stop()?;
 
-                render = RenderStream::new(&new_device_id, SAMPLE_RATE, CHANNELS)
-                    .context("Failed to create new render stream")?;
-                render.start().context("Failed to start new render stream")?;
-
-                current_device_id = new_device_id;
-                info!("Speaker output switched successfully");
+                match create_and_start_render(&new_device_id) {
+                    Ok(new_render) => {
+                        render = new_render;
+                        current_device_id = new_device_id;
+                        error_count = 0;
+                        info!("Speaker output switched successfully");
+                    }
+                    Err(e) => {
+                        error!("Failed to switch speaker output: {}", e);
+                        // Try to restart with old device
+                        render = create_and_start_render(&current_device_id)
+                            .context("Failed to restart render with previous device")?;
+                    }
+                }
             }
         }
 
         // Read from ring buffer and write to output
         let samples_read = buffer.read(&mut temp_buffer);
         if samples_read > 0 {
-            if let Err(e) = render.write(&temp_buffer[..samples_read]) {
-                error!("Speaker render error: {}", e);
-                thread::sleep(Duration::from_millis(1));
+            // Check if format conversion is needed
+            let cap_fmt = capture_format.read().unwrap().clone();
+            let rnd_fmt = render.format().cloned();
+
+            let write_result = if let (Some(ref cf), Some(ref rf)) = (cap_fmt, rnd_fmt) {
+                if formats_need_conversion(cf, rf) {
+                    let converted = convert_audio(
+                        &temp_buffer[..samples_read], cf, rf, &mut conversion_scratch,
+                    );
+                    render.write(&converted)
+                } else {
+                    render.write(&temp_buffer[..samples_read])
+                }
+            } else {
+                render.write(&temp_buffer[..samples_read])
+            };
+
+            if let Err(e) = write_result {
+                error_count += 1;
+                error!("Speaker render error (attempt {}): {}", error_count, e);
+
+                if error_count >= MAX_RECOVERY_ATTEMPTS {
+                    return Err(e.context("Too many consecutive render errors, giving up"));
+                }
+
+                warn!("Attempting to recover speaker render stream...");
+                thread::sleep(Duration::from_secs(1));
+                match create_and_start_render(&current_device_id) {
+                    Ok(new_render) => {
+                        render = new_render;
+                        info!("Speaker render stream recovered");
+                    }
+                    Err(re) => {
+                        error!("Failed to recover speaker render: {}", re);
+                    }
+                }
+            } else {
+                error_count = 0;
             }
         } else {
             // No data available - write silence to prevent underrun
-            let silence_samples = (SAMPLE_RATE / 1000) as usize * CHANNELS as usize; // 1ms of silence
+            let ch = render.format().map(|f| f.channels as usize).unwrap_or(2);
+            let rate = render.format().map(|f| f.sample_rate).unwrap_or(DEFAULT_SAMPLE_RATE);
+            let silence_samples = (rate / 1000) as usize * ch; // 1ms of silence
             let silence = vec![0.0f32; silence_samples];
             let _ = render.write(&silence);
             thread::sleep(Duration::from_micros(500));
@@ -441,26 +618,29 @@ fn run_speaker_render_loop(
     Ok(())
 }
 
-/// Microphone capture loop - captures from physical mic with hot-swap support
+// ── Microphone loops ───────────────────────────────────────────────────────
+
 fn run_mic_capture_loop(
     mic_input_id: Arc<RwLock<String>>,
     buffer: Arc<AudioRingBuffer>,
     running: Arc<AtomicBool>,
     mic_enabled: Arc<AtomicBool>,
+    capture_format: Arc<RwLock<Option<AudioFormat>>>,
 ) -> Result<()> {
     let device_id = mic_input_id.read().unwrap().clone();
     info!("Starting mic capture from device: {}", device_id);
 
-    let mut capture = CaptureStream::new(&device_id, SAMPLE_RATE, CHANNELS)
-        .context("Failed to create mic capture stream")?;
+    let mut capture = create_and_start_capture(&device_id)?;
 
-    capture.start().context("Failed to start mic capture")?;
+    if let Some(fmt) = capture.format() {
+        *capture_format.write().unwrap() = Some(fmt.clone());
+    }
 
     let mut current_device_id = device_id;
     let mut temp_buffer = vec![0.0f32; 4096];
+    let mut error_count: u32 = 0;
 
     while running.load(Ordering::SeqCst) {
-        // Check if mic is disabled
         if !mic_enabled.load(Ordering::SeqCst) {
             thread::sleep(Duration::from_millis(50));
             continue;
@@ -473,29 +653,58 @@ fn run_mic_capture_loop(
                 info!("Switching mic input to: {}", new_device_id);
                 capture.stop()?;
 
-                capture = CaptureStream::new(&new_device_id, SAMPLE_RATE, CHANNELS)
-                    .context("Failed to create new mic capture stream")?;
-                capture.start().context("Failed to start new mic capture stream")?;
-
-                current_device_id = new_device_id;
-                info!("Mic input switched successfully");
+                match create_and_start_capture(&new_device_id) {
+                    Ok(new_capture) => {
+                        capture = new_capture;
+                        if let Some(fmt) = capture.format() {
+                            *capture_format.write().unwrap() = Some(fmt.clone());
+                        }
+                        current_device_id = new_device_id;
+                        error_count = 0;
+                        info!("Mic input switched successfully");
+                    }
+                    Err(e) => {
+                        error!("Failed to switch mic input: {}", e);
+                        capture = create_and_start_capture(&current_device_id)
+                            .context("Failed to restart mic capture with previous device")?;
+                    }
+                }
             }
         }
 
         match capture.read(&mut temp_buffer) {
             Ok(samples_read) if samples_read > 0 => {
+                error_count = 0;
                 let written = buffer.write(&temp_buffer[..samples_read]);
                 if written < samples_read {
                     warn!("Mic ring buffer overflow: {} samples dropped", samples_read - written);
                 }
             }
             Ok(_) => {
-                // No data available, wait a bit
                 thread::sleep(Duration::from_micros(500));
             }
             Err(e) => {
-                error!("Mic capture error: {}", e);
-                thread::sleep(Duration::from_millis(10));
+                error_count += 1;
+                error!("Mic capture error (attempt {}): {}", error_count, e);
+
+                if error_count >= MAX_RECOVERY_ATTEMPTS {
+                    return Err(e.context("Too many consecutive mic capture errors, giving up"));
+                }
+
+                warn!("Attempting to recover mic capture stream...");
+                thread::sleep(Duration::from_secs(1));
+                match create_and_start_capture(&current_device_id) {
+                    Ok(new_capture) => {
+                        capture = new_capture;
+                        if let Some(fmt) = capture.format() {
+                            *capture_format.write().unwrap() = Some(fmt.clone());
+                        }
+                        info!("Mic capture stream recovered");
+                    }
+                    Err(re) => {
+                        error!("Failed to recover mic capture: {}", re);
+                    }
+                }
             }
         }
     }
@@ -505,49 +714,82 @@ fn run_mic_capture_loop(
     Ok(())
 }
 
-/// Microphone render loop - renders to VB-Cable Input (fixed device)
 fn run_mic_render_loop(
     mic_output_id: &str,
     buffer: Arc<AudioRingBuffer>,
     running: Arc<AtomicBool>,
     mic_enabled: Arc<AtomicBool>,
     buffer_ms: u32,
+    capture_format: Arc<RwLock<Option<AudioFormat>>>,
 ) -> Result<()> {
     info!("Starting mic render to device: {}", mic_output_id);
 
-    let mut render = RenderStream::new(mic_output_id, SAMPLE_RATE, CHANNELS)
-        .context("Failed to create mic render stream")?;
-
-    render.start().context("Failed to start mic render")?;
-
+    let mut render = create_and_start_render(mic_output_id)?;
     let mut temp_buffer = vec![0.0f32; 4096];
+    let mut conversion_scratch = Vec::new();
+    let mut error_count: u32 = 0;
 
-    // Pre-fill buffer to reduce initial latency issues
-    let prefill_samples = (SAMPLE_RATE * buffer_ms / 1000) as usize * CHANNELS as usize;
+    let render_channels = render.format().map(|f| f.channels as usize).unwrap_or(2);
+    let render_rate = render.format().map(|f| f.sample_rate).unwrap_or(DEFAULT_SAMPLE_RATE);
+    let prefill_samples = (render_rate * buffer_ms / 1000) as usize * render_channels;
     let silence = vec![0.0f32; prefill_samples];
     let _ = render.write(&silence);
 
     while running.load(Ordering::SeqCst) {
-        // Check if mic is disabled
         if !mic_enabled.load(Ordering::SeqCst) {
-            // Write silence when disabled to prevent audio glitches
-            let silence_samples = (SAMPLE_RATE / 1000) as usize * CHANNELS as usize;
+            let ch = render.format().map(|f| f.channels as usize).unwrap_or(2);
+            let rate = render.format().map(|f| f.sample_rate).unwrap_or(DEFAULT_SAMPLE_RATE);
+            let silence_samples = (rate / 1000) as usize * ch;
             let silence = vec![0.0f32; silence_samples];
             let _ = render.write(&silence);
             thread::sleep(Duration::from_millis(10));
             continue;
         }
 
-        // Read from ring buffer and write to output
         let samples_read = buffer.read(&mut temp_buffer);
         if samples_read > 0 {
-            if let Err(e) = render.write(&temp_buffer[..samples_read]) {
-                error!("Mic render error: {}", e);
-                thread::sleep(Duration::from_millis(1));
+            let cap_fmt = capture_format.read().unwrap().clone();
+            let rnd_fmt = render.format().cloned();
+
+            let write_result = if let (Some(ref cf), Some(ref rf)) = (cap_fmt, rnd_fmt) {
+                if formats_need_conversion(cf, rf) {
+                    let converted = convert_audio(
+                        &temp_buffer[..samples_read], cf, rf, &mut conversion_scratch,
+                    );
+                    render.write(&converted)
+                } else {
+                    render.write(&temp_buffer[..samples_read])
+                }
+            } else {
+                render.write(&temp_buffer[..samples_read])
+            };
+
+            if let Err(e) = write_result {
+                error_count += 1;
+                error!("Mic render error (attempt {}): {}", error_count, e);
+
+                if error_count >= MAX_RECOVERY_ATTEMPTS {
+                    return Err(e.context("Too many consecutive mic render errors, giving up"));
+                }
+
+                warn!("Attempting to recover mic render stream...");
+                thread::sleep(Duration::from_secs(1));
+                match create_and_start_render(mic_output_id) {
+                    Ok(new_render) => {
+                        render = new_render;
+                        info!("Mic render stream recovered");
+                    }
+                    Err(re) => {
+                        error!("Failed to recover mic render: {}", re);
+                    }
+                }
+            } else {
+                error_count = 0;
             }
         } else {
-            // No data available - write silence to prevent underrun
-            let silence_samples = (SAMPLE_RATE / 1000) as usize * CHANNELS as usize;
+            let ch = render.format().map(|f| f.channels as usize).unwrap_or(2);
+            let rate = render.format().map(|f| f.sample_rate).unwrap_or(DEFAULT_SAMPLE_RATE);
+            let silence_samples = (rate / 1000) as usize * ch;
             let silence = vec![0.0f32; silence_samples];
             let _ = render.write(&silence);
             thread::sleep(Duration::from_micros(500));
@@ -558,6 +800,8 @@ fn run_mic_render_loop(
     info!("Mic render loop stopped.");
     Ok(())
 }
+
+// ── IPC server ─────────────────────────────────────────────────────────────
 
 fn run_ipc_server(
     running: Arc<AtomicBool>,
@@ -583,7 +827,7 @@ fn run_ipc_server(
                 }
             }
             Ok(None) => {
-                // Timeout, continue loop
+                // Timeout or no client, continue loop
             }
             Err(e) => {
                 warn!("IPC accept error: {}", e);
